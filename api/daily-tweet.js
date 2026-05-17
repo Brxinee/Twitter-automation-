@@ -1,21 +1,16 @@
 /**
  * /api/daily-tweet — Vercel serverless function
  *
- * Runs daily via Vercel Cron (30 4 * * * UTC = 10:00 AM IST).
- * Generates a brand-voice tweet with Anthropic, validates it, posts to @smell0ff.
+ * Called twice daily via Vercel Cron (10 AM + 8 PM IST), each with ?slot=0 or ?slot=1.
+ * Picks a unique pre-written tweet for today's pillar + slot and posts it to @smell0ff.
  *
- * Flow:
- *   1. Auth check  (x-cron-secret header or Vercel's Authorization: Bearer)
- *   2. Pillar selection from day-of-week in IST
- *   3. AI generation (claude-sonnet-4-20250514)
- *   4. Validate → retry once → fallback to pre-written bank
- *   5. Post to X API v2
- *   6. Return JSON result
+ * Rotation formula: (pillarDayIndex * 2 + slot) % pool.length
+ *   - pillarDayIndex counts only the days this pillar has been active so far this year
+ *   - Every tweet in the pool gets posted — no skipping, no stuck-at-same-tweet bug
+ *   - Repeat cycle = pool.length / 2 active days per pillar
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { buildSystemPrompt, FALLBACK } from "../lib/brand.js";
-import { validateTweet } from "../lib/validate.js";
+import { FALLBACK } from "../lib/brand.js";
 import { postTweet } from "../lib/twitter.js";
 
 // ---------------------------------------------------------------------------
@@ -31,60 +26,74 @@ const PILLAR_BY_DAY = {
   6: "problem", // Saturday
 };
 
+const DAY_ABBR_TO_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
 /**
- * Returns today's content pillar using the IST timezone.
- * Vercel functions run in UTC, so we compute IST explicitly.
- * @returns {"problem"|"brand"|"promo"}
+ * Parse today's date in IST and return pillar, IST year, and absolute day-of-year.
+ * @returns {{ pillar: string, istYear: number, dayOfYear: number }}
  */
-function getPillar() {
-  // "en-IN" locale in "Asia/Kolkata" gives us the local weekday
-  const formatter = new Intl.DateTimeFormat("en-IN", {
+function getTodayIST() {
+  const now = new Date();
+
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(now);
+
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+
+  const istYear  = Number(get("year"));
+  const istMonth = Number(get("month")) - 1; // 0-based
+  const istDay   = Number(get("day"));
+
+  const startOfYear = new Date(Date.UTC(istYear, 0, 1));
+  const todayUTC    = new Date(Date.UTC(istYear, istMonth, istDay));
+  const dayOfYear   = Math.floor((todayUTC - startOfYear) / 86_400_000);
+
+  const pillar = PILLAR_BY_DAY[DAY_ABBR_TO_INDEX[get("weekday")]];
+  return { pillar, istYear, dayOfYear };
+}
+
+/**
+ * Count how many days from Jan 1 (inclusive) up to but not including dayOfYear
+ * were active days for the given pillar.
+ *
+ * This gives a monotonically increasing index specific to each pillar's schedule,
+ * ensuring the full tweet pool cycles evenly with no tweets skipped.
+ *
+ * @param {string} pillar
+ * @param {number} istYear
+ * @param {number} dayOfYear  0-based, today
+ * @returns {number}
+ */
+function getPillarDayIndex(pillar, istYear, dayOfYear) {
+  const startOfYear = new Date(Date.UTC(istYear, 0, 1));
+  const formatter   = new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
   });
-  const dayShort = formatter.format(new Date()); // e.g. "Mon", "Tue" …
-
-  // Map abbreviated weekday → 0-based index (Sun=0)
-  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const dayIndex = dayMap[dayShort];
-  return PILLAR_BY_DAY[dayIndex];
+  let count = 0;
+  for (let d = 0; d < dayOfYear; d++) {
+    const date    = new Date(startOfYear.getTime() + d * 86_400_000);
+    const weekday = formatter.format(date);
+    if (PILLAR_BY_DAY[DAY_ABBR_TO_INDEX[weekday]] === pillar) count++;
+  }
+  return count;
 }
-
-// ---------------------------------------------------------------------------
-// Anthropic generation
-// ---------------------------------------------------------------------------
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /**
- * Ask Anthropic to write a tweet for the given pillar.
- * @param {"problem"|"brand"|"promo"} pillar
- * @returns {Promise<string>} raw tweet text
+ * Pick the tweet for this pillar + slot combination.
+ * @param {string} pillar
+ * @param {number} pillarDayIndex
+ * @param {number} slot  0 or 1
+ * @returns {string}
  */
-async function generateTweet(pillar) {
-  const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1000,
-    system: buildSystemPrompt(pillar),
-    messages: [{ role: "user", content: "Write today's tweet." }],
-  });
-
-  // Extract plain text from the first content block
-  const raw = message.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("")
-    .trim();
-
-  // Strip wrapping quotes the model sometimes adds
-  return raw.replace(/^["'"']|["'"']$/g, "").trim();
-}
-
-// ---------------------------------------------------------------------------
-// Pick a random fallback tweet for the given pillar
-// ---------------------------------------------------------------------------
-function pickFallback(pillar) {
+function pickTweet(pillar, pillarDayIndex, slot) {
   const pool = FALLBACK[pillar];
-  return pool[Math.floor(Math.random() * pool.length)];
+  return pool[(pillarDayIndex * 2 + slot) % pool.length];
 }
 
 // ---------------------------------------------------------------------------
@@ -95,16 +104,10 @@ function pickFallback(pillar) {
 // ---------------------------------------------------------------------------
 function isAuthorized(req) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    // No secret configured — block all requests for safety
-    return false;
-  }
-  const xHeader = req.headers["x-cron-secret"];
+  if (!secret) return false;
+  const xHeader    = req.headers["x-cron-secret"];
   const authHeader = req.headers["authorization"];
-  return (
-    xHeader === secret ||
-    authHeader === `Bearer ${secret}`
-  );
+  return xHeader === secret || authHeader === `Bearer ${secret}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,49 +119,33 @@ export default async function handler(req, res) {
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
+  // 2. Slot (0 = 10 AM IST, 1 = 8 PM IST)
+  const slot = Math.max(0, Math.min(1, Number(req.query?.slot ?? 0) || 0));
+
   const timestamp = new Date().toISOString();
 
   try {
-    // 2. Pillar
-    const pillar = getPillar();
+    // 3. Date + pillar
+    const { pillar, istYear, dayOfYear } = getTodayIST();
 
-    // 3 & 4. Generate → validate → retry → fallback
-    let tweet;
-    let source;
+    // 4. Pillar-aware rotation index
+    const pillarDayIndex = getPillarDayIndex(pillar, istYear, dayOfYear);
 
-    const first = await generateTweet(pillar);
-    const firstCheck = validateTweet(first, pillar);
+    // 5. Pick tweet
+    const tweet = pickTweet(pillar, pillarDayIndex, slot);
 
-    if (firstCheck.valid) {
-      tweet = first;
-      source = "ai";
-    } else {
-      console.warn(`[daily-tweet] First generation failed validation: ${firstCheck.reason}`);
-
-      const second = await generateTweet(pillar);
-      const secondCheck = validateTweet(second, pillar);
-
-      if (secondCheck.valid) {
-        tweet = second;
-        source = "ai-retry";
-      } else {
-        console.warn(`[daily-tweet] Second generation failed validation: ${secondCheck.reason}. Using fallback.`);
-        tweet = pickFallback(pillar);
-        source = "fallback";
-      }
-    }
-
-    console.log(`[daily-tweet] pillar=${pillar} source=${source}`);
+    console.log(`[daily-tweet] slot=${slot} pillar=${pillar} pillarDay=${pillarDayIndex} tweetIdx=${(pillarDayIndex * 2 + slot) % FALLBACK[pillar].length}`);
     console.log(`[daily-tweet] tweet: ${tweet}`);
 
-    // 5. Post
+    // 6. Post
     const tweetId = await postTweet(tweet);
 
-    // 6. Respond
+    // 7. Respond
     return res.status(200).json({
       ok: true,
+      slot,
       pillar,
-      source,
+      source: "scheduled",
       tweet,
       tweetId,
       timestamp,

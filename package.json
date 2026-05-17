@@ -1,7 +1,7 @@
 {
   "name": "smelloff-daily-tweets",
   "version": "1.0.0",
-  "description": "Daily automated tweet pipeline for @smell0ff — generates on-brand tweets via Anthropic and posts via X API v2.",
+  "description": "Daily automated tweet pipeline for @smell0ff — posts pre-written brand tweets via X API v2.",
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -10,7 +10,6 @@
     "start": "node api/daily-tweet.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
     "oauth-1.0a": "^2.2.6"
   }
 }

@@ -1,8 +1,6 @@
 {
   "crons": [
-    {
-      "path": "/api/daily-tweet",
-      "schedule": "30 4 * * *"
-    }
+    { "path": "/api/daily-tweet?slot=0", "schedule": "30 4 * * *" },
+    { "path": "/api/daily-tweet?slot=1", "schedule": "30 14 * * *" }
   ]
 }
