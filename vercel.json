@@ -1,14 +1,6 @@
 {
   "crons": [
-    { "path": "/api/daily-tweet?slot=0", "schedule": "30 1 * * *" },
-    { "path": "/api/daily-tweet?slot=1", "schedule": "0 3 * * *" },
-    { "path": "/api/daily-tweet?slot=2", "schedule": "30 4 * * *" },
-    { "path": "/api/daily-tweet?slot=3", "schedule": "30 6 * * *" },
-    { "path": "/api/daily-tweet?slot=4", "schedule": "0 8 * * *" },
-    { "path": "/api/daily-tweet?slot=5", "schedule": "30 9 * * *" },
-    { "path": "/api/daily-tweet?slot=6", "schedule": "30 11 * * *" },
-    { "path": "/api/daily-tweet?slot=7", "schedule": "0 13 * * *" },
-    { "path": "/api/daily-tweet?slot=8", "schedule": "30 14 * * *" },
-    { "path": "/api/daily-tweet?slot=9", "schedule": "0 16 * * *" }
+    { "path": "/api/daily-tweet?slot=0", "schedule": "30 4 * * *" },
+    { "path": "/api/daily-tweet?slot=1", "schedule": "30 14 * * *" }
   ]
 }

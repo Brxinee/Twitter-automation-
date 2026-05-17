@@ -1,25 +1,17 @@
 # Smelloff Daily Tweet Pipeline
 
-Automated tweet engine for [@smell0ff](https://x.com/smell0ff). Posts 10 pre-written brand tweets per day at optimal IST times via Vercel Cron — entirely unattended. No AI API cost. Only dependency beyond Vercel is the X free tier (500 posts/month; 10/day = ~310/month, well within limit).
+Automated tweet engine for [@smell0ff](https://x.com/smell0ff). Posts 2 pre-written brand tweets per day via Vercel Cron — entirely unattended, completely free. Vercel Hobby plan (free) allows 2 cron jobs. X API free tier allows 500 posts/month; 2/day = ~62/month, well within that limit.
 
 ---
 
 ## Schedule
 
-10 posts per day, spread across peak engagement windows in IST:
+2 posts per day on the Vercel free plan:
 
 | Slot | IST time | UTC (cron) |
 |---|---|---|
-| 0 | 7:00 AM | `30 1 * * *` |
-| 1 | 8:30 AM | `0 3 * * *` |
-| 2 | 10:00 AM | `30 4 * * *` |
-| 3 | 12:00 PM | `30 6 * * *` |
-| 4 | 1:30 PM | `0 8 * * *` |
-| 5 | 3:00 PM | `30 9 * * *` |
-| 6 | 5:00 PM | `30 11 * * *` |
-| 7 | 6:30 PM | `0 13 * * *` |
-| 8 | 8:00 PM | `30 14 * * *` |
-| 9 | 9:30 PM | `0 16 * * *` |
+| 0 | 10:00 AM | `30 4 * * *` |
+| 1 | 8:00 PM | `30 14 * * *` |
 
 Content pillar by day (IST):
 
@@ -31,7 +23,7 @@ Content pillar by day (IST):
 
 Each slot picks a different tweet from the 10-tweet pool, so no tweet repeats within the same day.
 
-> **Vercel plan required:** 10 cron jobs require **Vercel Pro** ($20/month). The free Hobby plan caps at 2 cron jobs. If you want fewer posts to stay on the free plan, remove entries from `vercel.json`.
+> **Vercel Hobby (free) allows 2 cron jobs.** This config uses exactly 2 — no paid plan needed.
 
 ---
 
@@ -95,7 +87,7 @@ npm install
 vercel --prod
 ```
 
-Vercel detects `vercel.json` and registers all 10 cron jobs on the production deployment.
+Vercel detects `vercel.json` and registers the 2 cron jobs on the production deployment.
 
 > Cron jobs **only run on production** (`vercel --prod`). Preview deployments do not trigger cron.
 
@@ -104,15 +96,15 @@ Vercel detects `vercel.json` and registers all 10 cron jobs on the production de
 ## 5. Test manually
 
 ```bash
-# Test slot 0 (7 AM tweet)
+# Test slot 0 (10 AM tweet)
 curl -s \
   -H "x-cron-secret: YOUR_CRON_SECRET" \
   "https://your-project.vercel.app/api/daily-tweet?slot=0" | jq
 
-# Test slot 5 (3 PM tweet)
+# Test slot 1 (8 PM tweet)
 curl -s \
   -H "x-cron-secret: YOUR_CRON_SECRET" \
-  "https://your-project.vercel.app/api/daily-tweet?slot=5" | jq
+  "https://your-project.vercel.app/api/daily-tweet?slot=1" | jq
 ```
 
 Expected response:
@@ -124,7 +116,7 @@ Expected response:
   "source": "scheduled",
   "tweet": "...",
   "tweetId": "1234567890",
-  "timestamp": "2025-05-17T01:30:00.000Z"
+  "timestamp": "2025-05-17T04:30:00.000Z"
 }
 ```
 
@@ -132,7 +124,7 @@ Expected response:
 
 ## 6. Editing tweets
 
-Open `lib/brand.js` and edit the `FALLBACK` arrays. Each pillar has 10 tweets (one per daily slot). Adding more tweets extends the repeat cycle.
+Open `lib/brand.js` and edit the `FALLBACK` arrays. Each pillar has 10 tweets — the 2 daily slots cycle through them over time. Adding more tweets extends the repeat cycle.
 
 Rules:
 - Max 270 characters
@@ -143,34 +135,19 @@ Rules:
 
 ---
 
-## 7. Want fewer than 10 posts/day (free Vercel plan)?
-
-Remove cron entries from `vercel.json`. Hobby plan allows up to 2. For example, keep slots 2 and 8 for a 10 AM and 8 PM post:
-
-```json
-{
-  "crons": [
-    { "path": "/api/daily-tweet?slot=2", "schedule": "30 4 * * *" },
-    { "path": "/api/daily-tweet?slot=8", "schedule": "30 14 * * *" }
-  ]
-}
-```
-
----
-
-## 8. File reference
+## 7. File reference
 
 ```
 api/daily-tweet.js   — serverless handler (auth, slot, pillar, pick, post)
 lib/brand.js         — 30 pre-written tweets (10 per pillar) — edit content here
 lib/twitter.js       — X API v2 POST via OAuth 1.0a
 lib/validate.js      — validation helpers
-vercel.json          — 10 cron schedules
+vercel.json          — 2 cron schedules (10 AM + 8 PM IST)
 .env.example         — env var template
 ```
 
 ---
 
-## 9. Monitoring
+## 8. Monitoring
 
 Vercel dashboard → **Logs** → filter by `/api/daily-tweet`. Each run logs slot, pillar, and tweet text.
