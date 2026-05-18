@@ -10,6 +10,7 @@
     "start": "node api/daily-tweet.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
     "oauth-1.0a": "^2.2.6"
   }
 }

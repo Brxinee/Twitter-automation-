@@ -12,6 +12,7 @@
 
 import { FALLBACK } from "../lib/brand.js";
 import { postTweet } from "../lib/twitter.js";
+import { logTweet } from "../lib/supabase.js";
 
 // ---------------------------------------------------------------------------
 // Content pillar mapping by IST day-of-week (0 = Sunday … 6 = Saturday)
@@ -123,10 +124,13 @@ export default async function handler(req, res) {
   const slot = Math.max(0, Math.min(1, Number(req.query?.slot ?? 0) || 0));
 
   const timestamp = new Date().toISOString();
+  let pillar = null;
 
   try {
     // 3. Date + pillar
-    const { pillar, istYear, dayOfYear } = getTodayIST();
+    const today = getTodayIST();
+    pillar = today.pillar;
+    const { istYear, dayOfYear } = today;
 
     // 4. Pillar-aware rotation index
     const pillarDayIndex = getPillarDayIndex(pillar, istYear, dayOfYear);
@@ -140,7 +144,10 @@ export default async function handler(req, res) {
     // 6. Post
     const tweetId = await postTweet(tweet);
 
-    // 7. Respond
+    // 7. Log to Supabase (best-effort)
+    await logTweet({ slot, pillar, tweet_text: tweet, tweet_id: tweetId, status: "success" });
+
+    // 8. Respond
     return res.status(200).json({
       ok: true,
       slot,
@@ -152,6 +159,9 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error("[daily-tweet] Fatal error:", err);
+    if (pillar) {
+      await logTweet({ slot, pillar, tweet_text: "", status: "error", error: err.message }).catch(() => {});
+    }
     return res.status(500).json({ ok: false, error: err.message });
   }
 }
